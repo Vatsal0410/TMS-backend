@@ -19,24 +19,17 @@ export const createProject = async (
       members = [],
     } = req.body;
 
-    console.log("📦 Create Project Request: ", req.body);
-
     if (!title || !description || !startDate || !endDate || !leaderId) {
-      console.log("❌ missing required fields");
       res.status(400).json({ message: "All fields are required." });
       return;
     }
 
-    console.log("🔍 Checking leader: ", leaderId);
     const leader = await User.findOne({
       _id: leaderId,
-      isDeleted: false
+      isDeleted: false,
     });
 
-    console.log("👤 Leader found:", leader);
-
     if (!leader) {
-      console.log("❌ Leader not found");
       res.status(400).json({
         message: "Project manager must be an active project manager.",
       });
@@ -44,19 +37,14 @@ export const createProject = async (
     }
 
     if (leader.globalRole !== GlobalRole.PROJECT_MANAGER) {
-      console.log("❌ Leader not project manager. Role:", leader.globalRole);
       res.status(400).json({
         message: `Project leader must be a project manager. Current role: ${leader.globalRole}`,
       });
       return;
     }
 
-    console.log("✅ Leader validated");
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    console.log("📅 Dates - Start:", start, "End:", end);
 
     if (start >= end) {
       res.status(400).json({ message: "Start date must be before end date." });
@@ -66,7 +54,6 @@ export const createProject = async (
     const validatedMembers = [];
     // FIXME: Members validation uses a loop of separate DB queries. Use a single $in query for all members.
     for (const member of members) {
-      console.log("🔍 Validating member:", member.userId);
       const user = await User.findOne({
         _id: member.userId,
         isDeleted: false,
@@ -96,8 +83,6 @@ export const createProject = async (
       assignedBy: req.user._id,
     });
 
-    console.log("✅ All validation passed");
-
     const project = new Project({
       title,
       description,
@@ -110,10 +95,7 @@ export const createProject = async (
       createdBy: req.user._id,
     });
 
-    console.log("📝 Project object created, saving...");
-
     await project.save();
-    console.log("✅ Project saved successfully");
 
     const populatedProject = await Project.findById(project._id)
       .populate("leaderId", "id fname lname email globalRole")
@@ -137,15 +119,16 @@ export const getProjects = async (
   res: Response
 ): Promise<void> => {
   try {
-    let query: any;
+    let query: any = {};
 
     if (req.user.globalRole === GlobalRole.TEAM_MEMBER) {
       query["members.userId"] = req.user._id;
     } else if (req.user.globalRole === GlobalRole.PROJECT_MANAGER) {
-      query["leader"] = [
+      query.$or = [
         { leaderId: req.user._id },
         { "members.userId": req.user._id },
       ];
+    } else if (req.user.globalRole === GlobalRole.ADMIN) {
     }
 
     const projects = await Project.find(query)
@@ -230,7 +213,9 @@ export const updateProject = async (
       project.leaderId.toString() === req.user._id.toString();
 
     if (!canUpdate) {
-      res.status(403).json({ message: "Access denied to update this project." });
+      res
+        .status(403)
+        .json({ message: "Access denied to update this project." });
       return;
     }
 
@@ -307,7 +292,7 @@ export const updateProject = async (
 
         return {
           userId: member.userId,
-          projectRole: member.projectRole || 'Team Member',
+          projectRole: member.projectRole || "Team Member",
           assignedAt: new Date(),
           assignedBy: req.user._id,
         };
@@ -350,14 +335,14 @@ export const updateProject = async (
         });
         return;
       }
-      
+
       // Update leader ID
       project.leaderId = leaderId;
 
       // Update leader role in members array if present
       if (project.members) {
-        const leaderMember = project.members.find((m: any) => 
-          m.userId.toString() === leaderId.toString()
+        const leaderMember = project.members.find(
+          (m: any) => m.userId.toString() === leaderId.toString()
         );
         if (leaderMember) {
           leaderMember.projectRole = ProjectRole.LEADER;
