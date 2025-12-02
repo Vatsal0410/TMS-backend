@@ -1,25 +1,30 @@
 import express from 'express';
 import { authenticate, checkTempPassword } from '../middleware/auth';
-import { createTask, createSubTask, deleteTask, getSubTasks, getTaskById, getTasks, restoreTask, updateTask, updateSubTask, deleteSubTask, restoreSubTask, getSubTaskById } from '../controllers/taskController';
+import { createTask, createSubTask, deleteTask, getSubTasks, getTaskById, getTasks, restoreTask, updateTask, updateSubTask, deleteSubTask, restoreSubTask, getSubTaskById, getTaskStats } from '../controllers/taskController';
 
 const router = express.Router();
 
+// All routes require auth, password reset check
 router.use(authenticate, checkTempPassword)
 
-// Get all tasks and get task by id
+// Task analytics route
+router.get('/insights', getTaskStats)
+
+// Task retrieval routes
 router.get('/', getTasks)
 router.get('/:id', getTaskById)
 
-// Create, update, delete, restore task
+// Task management routes
 router.post('/', createTask)
 router.put('/:id', updateTask)
 router.delete('/:id', deleteTask)
 router.put('/:id/restore', restoreTask)
 
-// Create, get, update, delete, restore subtask
+// Subtask retrieval routes
 router.get('/:id/subtasks', getSubTasks)
 router.get('/:id/subTasks/:subTaskId', getSubTaskById)
 
+// Subtask management routes
 router.post('/:id/subtasks', createSubTask);
 router.put('/:id/subtasks/:subTaskId', updateSubTask)
 router.delete('/:id/subtasks/:subTaskId', deleteSubTask)

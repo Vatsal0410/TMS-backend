@@ -8,6 +8,7 @@ export interface IProjectMember {
   assignedBy?: mongoose.Types.ObjectId;
 }
 
+// Project interface
 export interface IProject extends Document {
   title: string;
   description: string;
@@ -22,6 +23,7 @@ export interface IProject extends Document {
   createdBy: mongoose.Types.ObjectId;
 }
 
+// Project schema
 const ProjectSchema: Schema = new Schema({
   title: {
     type: String,
@@ -95,9 +97,11 @@ const ProjectSchema: Schema = new Schema({
   versionKey: false
 });
 
+// Indexes for faster queries
 ProjectSchema.index({ leaderId: 1 });
 ProjectSchema.index({ 'members.userId': 1 });
 ProjectSchema.index({ status: 1 });
 ProjectSchema.index({ isDeleted: 1 });
 
+// Project model 
 export const Project = mongoose.model<IProject>('Project', ProjectSchema);

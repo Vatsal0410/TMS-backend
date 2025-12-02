@@ -3,6 +3,7 @@ import { AuthRequest } from "../middleware/auth";
 import { IProjectMember, Project } from "../models/Project";
 import { GlobalRole, ProjectRole, ProjectStatus } from "../types/enums";
 import { User } from "../models/User";
+import mongoose from "mongoose";
 
 // Create project
 export const createProject = async (
@@ -31,7 +32,7 @@ export const createProject = async (
 
     if (!leader) {
       res.status(400).json({
-        message: "Project manager must be an active project manager.",
+        message: "Project leader not found.",
       });
       return;
     }
@@ -51,16 +52,20 @@ export const createProject = async (
       return;
     }
 
-    const validatedMembers = [];
-    // FIXME: Members validation uses a loop of separate DB queries. Use a single $in query for all members.
-    for (const member of members) {
-      const user = await User.findOne({
-        _id: member.userId,
-        isDeleted: false,
-        globalRole: GlobalRole.TEAM_MEMBER,
-      });
+    const memberIds = members.map(
+      (m: IProjectMember) => new mongoose.Types.ObjectId(m.userId)
+    );
+    const validUsers = await User.find({
+      _id: { $in: memberIds },
+      isDeleted: false,
+      globalRole: GlobalRole.TEAM_MEMBER,
+    }).select("_id");
 
-      if (!user) {
+    const validUserIds = validUsers.map((u) => u._id.toString());
+    const validatedMembers = [];
+
+    for (const member of members) {
+      if (!validUserIds.includes(member.userId.toString())) {
         res.status(400).json({
           message: `User ${member.userId} is not a valid team member.`,
         });
@@ -75,13 +80,18 @@ export const createProject = async (
       });
     }
 
-    // FIXME: Leader is added to members without validation of duplicates
-    validatedMembers.push({
-      userId: leaderId,
-      projectRole: "Project Manager",
-      assignedAt: new Date(),
-      assignedBy: req.user._id,
-    });
+    const leaderAlreadyInMembers = members.some(
+      (m: IProjectMember) => m.userId.toString() === leaderId.toString()
+    );
+
+    if (!leaderAlreadyInMembers) {
+      validatedMembers.push({
+        userId: leaderId,
+        projectRole: ProjectRole.LEADER,
+        assignedAt: new Date(),
+        assignedBy: req.user._id,
+      });
+    }
 
     const project = new Project({
       title,
@@ -107,8 +117,7 @@ export const createProject = async (
       project: populatedProject,
     });
   } catch (error: any) {
-    console.error("🔥 Create project error:", error);
-    console.error("🔥 Error stack:", error.stack);
+    console.error("Create project error:", error);
     res.status(500).json({ message: "Internal server error." });
   }
 };
@@ -119,7 +128,58 @@ export const getProjects = async (
   res: Response
 ): Promise<void> => {
   try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      status,
+      startDateFrom,
+      startDateTo,
+      endDateFrom,
+      endDateTo,
+    } = req.query;
+
+    const skip = (Number(page) - 1) * Number(limit);
     let query: any = {};
+
+    if (search) {
+      query.$or = [
+        { title: { $regex: search as string, $options: "i" } },
+        { description: { $regex: search as string, $options: "i" } },
+      ];
+    }
+
+    if (status) {
+      query.status = status;
+    }
+
+    if (startDateFrom || startDateTo) {
+      query.startDate = {};
+      if (startDateFrom) {
+        const startFrom = new Date(startDateFrom as string);
+        startFrom.setHours(0, 0, 0, 0);
+        query.startDate.$gte = startFrom;
+      }
+      if (startDateTo) {
+        const startTo = new Date(startDateTo as string);
+        startTo.setHours(23, 59, 59, 999);
+        query.startDate.$lte = startTo;
+      }
+    }
+
+    if (endDateFrom || endDateTo) {
+      query.endDate = {};
+      if (endDateFrom) {
+        const endFrom = new Date(endDateFrom as string);
+        endFrom.setHours(0, 0, 0, 0);
+        query.endDate.$gte = endFrom;
+      }
+      if (endDateTo) {
+        const endTo = new Date(endDateTo as string);
+        endTo.setHours(23, 59, 59, 999);
+        query.endDate.$lte = endTo;
+      }
+    }
 
     if (req.user.globalRole === GlobalRole.TEAM_MEMBER) {
       query["members.userId"] = req.user._id;
@@ -128,16 +188,44 @@ export const getProjects = async (
         { leaderId: req.user._id },
         { "members.userId": req.user._id },
       ];
-    } else if (req.user.globalRole === GlobalRole.ADMIN) {
     }
 
-    const projects = await Project.find(query)
-      .populate("leaderId", "id fname lname email globalRole")
-      .populate("members.userId", "id fname lname email globalRole")
-      .populate("createdBy", "id fname lname email globalRole")
-      .sort({ createdAt: -1 });
+    const [projects, total, activeProjectsCount] = await Promise.all([
+      Project.find(query)
+        .populate("leaderId", "id fname lname email globalRole")
+        .populate("members.userId", "id fname lname email globalRole")
+        .populate("createdBy", "id fname lname email globalRole")
+        .skip(skip)
+        .limit(Number(limit))
+        .sort({ createdAt: -1 }),
 
-    res.json({ projects });
+      Project.countDocuments(query),
+
+      Project.countDocuments({ isDeleted: false }),
+    ]);
+
+    res.json({
+      projects,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit)),
+      },
+      stats: {
+        activeProjects: activeProjectsCount,
+        totalProjects: total,
+        showing: projects.length,
+      },
+      filters: {
+        search: search || null,
+        status: status || null,
+        startDateFrom: startDateFrom || null,
+        startDateTo: startDateTo || null,
+        endDateFrom: endDateFrom || null,
+        endDateTo: endDateTo || null,
+      },
+    });
   } catch (error) {
     console.error("Get projects error: ", error);
     res.status(500).json({ message: "Internal server error." });
@@ -163,7 +251,6 @@ export const getProjectById = async (
       return;
     }
 
-    // Check access permissions
     const hasAccess =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId._id.toString() === req.user._id.toString() ||
@@ -207,7 +294,6 @@ export const updateProject = async (
       return;
     }
 
-    // Check permissions: Admin or Project Leader
     const canUpdate =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString();
@@ -219,21 +305,18 @@ export const updateProject = async (
       return;
     }
 
-    // ✅ Store current/new leader ID
     const currentLeaderId = leaderId || project.leaderId;
 
-    // Update members array if provided
     if (members !== undefined) {
       const uniqueUserIds = new Set<string>();
       const validatedMembers: IProjectMember[] = [];
 
-      // Validate all members
       for (const member of members) {
         if (uniqueUserIds.has(member.userId.toString())) {
           res.status(400).json({
             message: `Duplicate user ${member.userId} in members array.`,
           });
-          return; // ✅ ADDED RETURN
+          return;
         }
 
         uniqueUserIds.add(member.userId.toString());
@@ -263,7 +346,6 @@ export const updateProject = async (
         validatedMembers.push(member);
       }
 
-      // ✅ MOVED OUTSIDE LOOP: Auto-add leader if missing
       const leaderInMembers = validatedMembers.some(
         (member) => member.userId.toString() === currentLeaderId.toString()
       );
@@ -275,7 +357,6 @@ export const updateProject = async (
         });
       }
 
-      // Map to final member structure
       const updatedMembers = validatedMembers.map((member) => {
         const existingMember = project.members.find(
           (m: any) => m.userId.toString() === member.userId.toString()
@@ -292,13 +373,12 @@ export const updateProject = async (
 
         return {
           userId: member.userId,
-          projectRole: member.projectRole || "Team Member",
+          projectRole: member.projectRole,
           assignedAt: new Date(),
           assignedBy: req.user._id,
         };
       });
 
-      // ✅ Final check leader is included
       const finalLeaderCheck = updatedMembers.some(
         (member) => member.userId.toString() === currentLeaderId.toString()
       );
@@ -310,18 +390,15 @@ export const updateProject = async (
         return;
       }
 
-      // ✅ SINGLE ASSIGNMENT: Set project members
       project.members = updatedMembers;
     }
 
-    // Update basic project fields
     if (title !== undefined) project.title = title;
     if (description !== undefined) project.description = description;
     if (startDate !== undefined) project.startDate = new Date(startDate);
     if (endDate !== undefined) project.endDate = new Date(endDate);
     if (status !== undefined) project.status = status;
 
-    // Leader update validation
     if (leaderId !== undefined && leaderId !== project.leaderId.toString()) {
       const newLeader = await User.findOne({
         _id: leaderId,
@@ -336,10 +413,8 @@ export const updateProject = async (
         return;
       }
 
-      // Update leader ID
       project.leaderId = leaderId;
 
-      // Update leader role in members array if present
       if (project.members) {
         const leaderMember = project.members.find(
           (m: any) => m.userId.toString() === leaderId.toString()
@@ -381,13 +456,11 @@ export const deleteProject = async (
       return;
     }
 
-    // Only admin can delete projects
     if (req.user.globalRole !== GlobalRole.ADMIN) {
       res.status(403).json({ message: "Only admin can delete projects." });
       return;
     }
 
-    // Soft delete
     project.isDeleted = true;
     project.deletedAt = new Date();
     project.deletedBy = req.user._id;
@@ -415,7 +488,6 @@ export const restoreProject = async (
       return;
     }
 
-    // Only admin can restore projects
     if (req.user.globalRole !== GlobalRole.ADMIN) {
       res.status(403).json({ message: "Only admin can restore projects." });
       return;
@@ -429,6 +501,111 @@ export const restoreProject = async (
     res.json({ message: "Project restored successfully." });
   } catch (error) {
     console.error("Restore project error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// Get project stats
+export const getProjectStats = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    let query: any = { isDeleted: false };
+
+    if (req.user.globalRole === GlobalRole.TEAM_MEMBER) {
+      query["members.userId"] = req.user._id;
+    } else if (req.user.globalRole === GlobalRole.PROJECT_MANAGER) {
+      query.$or = [
+        { leaderId: req.user._id },
+        { "members.userId": req.user._id },
+      ];
+    }
+
+    const statusStats = await Project.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalMembers: { $sum: { $size: "$members" } },
+        },
+      },
+      { $sort: { count: -1 } },
+    ]);
+
+    const today = new Date();
+    const overdueProjects = await Project.countDocuments({
+      ...query,
+      endDate: { $lt: today },
+      status: { $ne: ProjectStatus.COMPLETED },
+    });
+
+    const totalProjects = await Project.countDocuments(query);
+
+    const avgTeamSizeResult = await Project.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          avgTeamSize: { $avg: { $size: "$members" } },
+          minTeamSize: { $min: { $size: "$members" } },
+          maxTeamSize: { $max: { $size: "$members" } },
+        },
+      },
+    ]);
+
+    const timelineStats = await Project.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          earliestStart: { $min: "$startDate" },
+          latestEnd: { $max: "$endDate" },
+          avgDurationDays: {
+            $avg: {
+              $divide: [
+                { $subtract: ["$endDate", "$startDate"] },
+                1000 * 60 * 60 * 24, // Convert ms to days
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    res.json({
+      statusDistribution: statusStats,
+      totals: {
+        totalProjects,
+        overdueProjects,
+        completedProjects:
+          statusStats.find((s) => s._id === ProjectStatus.COMPLETED)?.count ||
+          0,
+        activeProjects:
+          statusStats.find((s) => s._id === ProjectStatus.ACTIVE)?.count || 0,
+      },
+      teamStats: {
+        averageTeamSize: avgTeamSizeResult[0]?.avgTeamSize
+          ? Math.round(avgTeamSizeResult[0].avgTeamSize * 100) / 100
+          : 0,
+        minTeamSize: avgTeamSizeResult[0]?.minTeamSize || 0,
+        maxTeamSize: avgTeamSizeResult[0]?.maxTeamSize || 0,
+        totalTeamMembers: statusStats.reduce(
+          (sum, stat) => sum + stat.totalMembers,
+          0
+        ),
+      },
+      timeline: {
+        earliestStartDate: timelineStats[0]?.earliestStart || null,
+        latestEndDate: timelineStats[0]?.latestEnd || null,
+        averageDurationDays: timelineStats[0]?.avgDurationDays
+          ? Math.round(timelineStats[0].avgDurationDays * 100) / 100
+          : 0,
+      },
+    });
+  } catch (error) {
+    console.error("Get project stats error:", error);
     res.status(500).json({ message: "Internal server error." });
   }
 };

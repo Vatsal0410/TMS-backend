@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 import { GlobalRole, ProjectRole } from "../types/enums";
 
+// User interface
 export interface IOTPRequest {
   code: string; 
   purpose: 'PASSWORD_RESET' | 'EMAIL_VERIFICATION' | 'PHONE_VERIFICATION';
@@ -11,11 +12,14 @@ export interface IOTPRequest {
   createdAt: Date;
 }
 
+// User interface
 export interface IUser extends Document {
     fname: string;
     lname?: string;
     email: string;
     password: string;
+    isActive: boolean;
+    refreshToken?: string;
     avatar?: string;
     globalRole: GlobalRole;
     projectAssignments: {
@@ -41,6 +45,7 @@ export interface IUser extends Document {
     resetPasswordOTPExpires?: Date;
 }
 
+// User schema 
 const UserSchema: Schema = new Schema({
     fname: {
         type: String,
@@ -56,6 +61,11 @@ const UserSchema: Schema = new Schema({
         type: String,
         required: true
     },
+    isActive: {
+        type: Boolean,
+        default: true
+    },
+    refreshToken: String,
     avatar: String,
     globalRole: {
         type: String,
@@ -145,4 +155,5 @@ const UserSchema: Schema = new Schema({
     versionKey: false
 });
 
+// User model
 export const User = mongoose.model<IUser>('User', UserSchema);

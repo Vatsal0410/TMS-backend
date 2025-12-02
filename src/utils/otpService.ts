@@ -15,7 +15,6 @@ export const createOTP = async (plainOTP: string, purpose: 'PASSWORD_RESET' | 'E
 }
 
 export const verifyOTP = (inputOTP: string, storedOTP: string): Promise<boolean> => {
-    console.log(bcrypt.compare(inputOTP, storedOTP))
     return bcrypt.compare(inputOTP, storedOTP)
 }
 

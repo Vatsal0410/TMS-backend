@@ -7,6 +7,8 @@ import authRoutes from "./routes/auth";
 import userRoutes from "./routes/users";
 import projectRoutes from "./routes/projects";
 import taskRoutes from "./routes/tasks";
+import worklogRoutes from "./routes/worklogs";
+
 
 dotenv.config();
 
@@ -18,13 +20,18 @@ if (!MONGO_URI) {
   throw new Error("❌ MONGODB_URI is missing in environment variables");
 }
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/tasks", taskRoutes);
+app.use("/api/worklogs", worklogRoutes);
 
 app.get("/health", (req, res) => {
   res.json({ message: "Server is running!" });

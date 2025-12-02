@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema } from "mongoose";
 import { TaskPriority, TaskStatus } from "../types/enums";
 
+// Task interface
 export interface ITask extends Document {
   taskNumber: string;
   title: string;
@@ -21,6 +22,7 @@ export interface ITask extends Document {
   deletedBy?: mongoose.Types.ObjectId;
 }
 
+// Task schema
 const TaskSchema: Schema = new Schema(
   {
     taskNumber: {
@@ -95,9 +97,11 @@ const TaskSchema: Schema = new Schema(
   }
 );
 
+// Indexes for faster queries
 TaskSchema.index({ projectId: 1, taskNumber: 1 });
 TaskSchema.index({ projectId: 1, status: 1 });
 TaskSchema.index({ projectId: 1, assignedTo: 1 });
 TaskSchema.index({ parentTaskId: 1, isDeleted: 1 });
 
+// Task model 
 export const Task = mongoose.model<ITask>("Task", TaskSchema)

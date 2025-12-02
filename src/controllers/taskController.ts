@@ -136,21 +136,23 @@ export const getTasks = async (
   res: Response
 ): Promise<void> => {
   try {
-    console.log("🔍 GET /api/tasks called");
-    console.log("🔍 User ID:", req.user._id);
-    console.log("🔍 User Role:", req.user.globalRole);
-    console.log("🔍 Query params:", req.query);
-
-    const { projectId, status, assignedTo, priority, search } = req.query;
+    const { 
+      projectId, 
+      status, 
+      assignedTo, 
+      priority, 
+      search,
+      page = 1, 
+      limit = 20 
+    } = req.query;
+    
+    const skip = (Number(page) - 1) * Number(limit);
     let query: any = {};
 
     if (projectId) {
-      console.log("🔍 Project ID provided:", projectId);
       query.projectId = projectId;
-
       const project = await Project.findById(projectId);
-      console.log("🔍 Found project:", project ? "YES" : "NO");
-
+      
       if (!project) {
         res.status(404).json({ message: "Project not found" });
         return;
@@ -164,31 +166,21 @@ export const getTasks = async (
             member.userId.toString() === req.user._id.toString()
         );
 
-      console.log("🔍 User has access to project:", hasAccess);
-
       if (!hasAccess) {
         res.status(403).json({ message: "Access denied" });
         return;
       }
     } else {
-      console.log("🔍 No projectId provided - getting all user's projects");
-
-      // As admin, you should see ALL projects
       if (req.user.globalRole === GlobalRole.ADMIN) {
-        console.log("🔍 User is ADMIN - getting ALL projects");
-        // Admin can see tasks from all projects
         const allProjects = await Project.find({}).select("_id");
         const projectIds = allProjects.map((project: IProject) => project._id);
-        console.log("🔍 All project IDs:", projectIds);
 
         if (projectIds.length === 0) {
-          console.log("🔍 No projects found in system");
-          res.json({ tasks: [] });
+          res.json({ tasks: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
           return;
         }
         query.projectId = { $in: projectIds };
       } else {
-        // Non-admin users: get projects they're involved in
         const userProjects = await Project.find({
           $or: [
             { leaderId: req.user._id },
@@ -197,19 +189,16 @@ export const getTasks = async (
         }).select("_id");
 
         const projectIds = userProjects.map((project: IProject) => project._id);
-        console.log("🔍 User's project IDs:", projectIds);
 
         if (projectIds.length === 0) {
-          console.log("🔍 User has no projects");
-          res.json({ tasks: [] });
+          res.json({ tasks: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
           return;
         }
         query.projectId = { $in: projectIds };
       }
     }
 
-    // Add task filters
-    query.isDeleted = false; // Only show non-deleted tasks
+    query.isDeleted = false;
 
     if (status) query.status = status;
     if (assignedTo) query.assignedTo = assignedTo;
@@ -223,19 +212,29 @@ export const getTasks = async (
       ];
     }
 
-    console.log("🔍 Final query:", JSON.stringify(query, null, 2));
+    const [tasks, total] = await Promise.all([
+      Task.find(query)
+        .populate("projectId", "title")
+        .populate("assignedTo", "fname lname email")
+        .populate("parentTaskId", "title taskNumber")
+        .populate("createdBy", "fname lname email")
+        .skip(skip)
+        .limit(Number(limit))
+        .sort({ createdAt: -1 }),
+      
+      Task.countDocuments(query)
+    ]);
 
-    const tasks = await Task.find(query)
-      .populate("projectId", "title")
-      .populate("assignedTo", "fname lname email")
-      .populate("parentTaskId", "title taskNumber")
-      .populate("createdBy", "fname lname email")
-      .sort({ createdAt: -1 });
-
-    console.log("🔍 Found tasks:", tasks.length);
-    console.log("🔍 Tasks:", tasks);
-
-    res.json({ tasks });
+    res.json({ 
+      tasks,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit))
+      },
+      activeTasks: await Task.countDocuments({ isDeleted: false })
+    });
   } catch (error) {
     console.error("Get tasks error: ", error);
     res.status(500).json({ message: "Internal server error" });
@@ -571,7 +570,6 @@ export const createSubTask = async (
       return;
     }
 
-    // Get parent task
     const parentTask = await Task.findOne({
       _id: parentTaskId,
       isDeleted: false,
@@ -585,7 +583,6 @@ export const createSubTask = async (
     const project = parentTask.projectId as any;
     const projectId = project._id;
 
-    // Check permissions (same as createTask)
     const canCreate =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString();
@@ -595,17 +592,15 @@ export const createSubTask = async (
       return;
     }
 
-    // Determine assignee: Use provided OR inherit from parent task
     let finalAssignedTo = assignedTo || parentTask.assignedTo;
 
-    // Validate assigned user if we have one
     if (finalAssignedTo) {
       const assignedUser = await User.findOne({
         _id: finalAssignedTo,
         isDeleted: false,
         globalRole: GlobalRole.TEAM_MEMBER,
       });
-      
+
       if (!assignedUser) {
         res.status(404).json({ message: "Assigned user not found" });
         return;
@@ -615,26 +610,24 @@ export const createSubTask = async (
         (member: IProjectMember) =>
           member.userId.toString() === assignedUser._id.toString()
       );
-      
+
       if (!isProjectMember) {
-        res.status(403).json({ 
-          message: "Assigned user is not a member of the project" 
+        res.status(403).json({
+          message: "Assigned user is not a member of the project",
         });
         return;
       }
     }
 
-    // Generate task number (inherits from same project)
     const taskNumber = await generateTaskNumber(projectId.toString());
 
-    // Create subtask
     const subTask = new Task({
       taskNumber,
       title,
       description,
       projectId,
-      parentTaskId, // Automatically set from params
-      assignedTo: finalAssignedTo, // Use determined assignee
+      parentTaskId,
+      assignedTo: finalAssignedTo,
       status: TaskStatus.PENDING,
       priority: priority || TaskPriority.LOW,
       estimatedHours,
@@ -647,7 +640,6 @@ export const createSubTask = async (
 
     await subTask.save();
 
-    // Populate and return
     const populatedSubTask = await Task.findById(subTask._id)
       .populate("projectId", "title leaderId")
       .populate("assignedTo", "fname lname email globalRole")
@@ -726,10 +718,6 @@ export const getSubTaskById = async (
   try {
     const { id: parentTaskId, subTaskId } = req.params;
 
-    console.log("Parent Task ID:", parentTaskId);
-    console.log("Subtask ID:", subTaskId);
-
-    // First verify parent task exists and user has access
     const parentTask = await Task.findOne({
       _id: parentTaskId,
       isDeleted: false,
@@ -742,7 +730,6 @@ export const getSubTaskById = async (
 
     const project = parentTask.projectId as any;
 
-    // Check access to parent task
     const hasAccess =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString() ||
@@ -756,10 +743,9 @@ export const getSubTaskById = async (
       return;
     }
 
-    // Now find the subtask
     const subTask = await Task.findOne({
       _id: subTaskId,
-      parentTaskId: parentTaskId, // Ensure it belongs to this parent
+      parentTaskId: parentTaskId,
       isDeleted: false,
     })
       .populate("projectId", "title leaderId")
@@ -788,7 +774,6 @@ export const updateSubTask = async (
     const { id: parentTaskId, subTaskId } = req.params;
     const updates = req.body;
 
-    // First verify parent task exists and user has access
     const parentTask = await Task.findOne({
       _id: parentTaskId,
       isDeleted: false,
@@ -801,10 +786,9 @@ export const updateSubTask = async (
 
     const project = parentTask.projectId as any;
 
-    // Find subtask that belongs to this parent
     const subTask = await Task.findOne({
       _id: subTaskId,
-      parentTaskId: parentTaskId, // CRITICAL: Check parent relationship
+      parentTaskId: parentTaskId,
       isDeleted: false,
     });
 
@@ -813,7 +797,6 @@ export const updateSubTask = async (
       return;
     }
 
-    // Check permissions
     const canUpdate =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString() ||
@@ -824,28 +807,28 @@ export const updateSubTask = async (
       return;
     }
 
-    // If assignee is updating, restrict fields
-    if (subTask.assignedTo?.toString() === req.user._id.toString() &&
-        req.user.globalRole !== GlobalRole.ADMIN &&
-        project.leaderId.toString() !== req.user._id.toString()) {
-
+    if (
+      subTask.assignedTo?.toString() === req.user._id.toString() &&
+      req.user.globalRole !== GlobalRole.ADMIN &&
+      project.leaderId.toString() !== req.user._id.toString()
+    ) {
       const allowedFields = ["status", "actualHours"];
       const requestedFields = Object.keys(updates);
 
       const hasUnauthorizedField = requestedFields.some(
-        field => !allowedFields.includes(field) && updates[field] !== undefined
+        (field) =>
+          !allowedFields.includes(field) && updates[field] !== undefined
       );
 
       if (hasUnauthorizedField) {
         res.status(403).json({
-          message: "You can only update status and actual hours"
+          message: "You can only update status and actual hours",
         });
         return;
       }
     }
 
-    // Apply updates
-    Object.keys(updates).forEach(key => {
+    Object.keys(updates).forEach((key) => {
       if (updates[key] !== undefined) {
         (subTask as any)[key] = updates[key];
       }
@@ -859,7 +842,7 @@ export const updateSubTask = async (
 
     res.json({
       message: "Subtask updated successfully",
-      task: updatedSubTask
+      task: updatedSubTask,
     });
   } catch (error) {
     console.error("Update subtask error: ", error);
@@ -875,7 +858,6 @@ export const deleteSubTask = async (
   try {
     const { id: parentTaskId, subTaskId } = req.params;
 
-    // First verify parent task exists
     const parentTask = await Task.findOne({
       _id: parentTaskId,
       isDeleted: false,
@@ -888,10 +870,9 @@ export const deleteSubTask = async (
 
     const project = parentTask.projectId as any;
 
-    // Find subtask that belongs to this parent
     const subTask = await Task.findOne({
       _id: subTaskId,
-      parentTaskId: parentTaskId, // CRITICAL: Check parent relationship
+      parentTaskId: parentTaskId,
       isDeleted: false,
     });
 
@@ -900,7 +881,6 @@ export const deleteSubTask = async (
       return;
     }
 
-    // Only Admin or Project Leader can delete subtasks
     const canDelete =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString();
@@ -910,20 +890,18 @@ export const deleteSubTask = async (
       return;
     }
 
-    // Check if subtask has its own subtasks
     const hasNestedSubTasks = await Task.exists({
       parentTaskId: subTask._id,
-      isDeleted: false
+      isDeleted: false,
     });
 
     if (hasNestedSubTasks) {
       res.status(400).json({
-        message: "Cannot delete subtask with nested subtasks"
+        message: "Cannot delete subtask with nested subtasks",
       });
       return;
     }
 
-    // Soft delete
     subTask.isDeleted = true;
     subTask.deletedAt = new Date();
     subTask.deletedBy = req.user._id;
@@ -945,7 +923,6 @@ export const restoreSubTask = async (
   try {
     const { id: parentTaskId, subTaskId } = req.params;
 
-    // First verify parent task exists
     const parentTask = await Task.findOne({
       _id: parentTaskId,
       isDeleted: false,
@@ -958,10 +935,9 @@ export const restoreSubTask = async (
 
     const project = parentTask.projectId as any;
 
-    // Find deleted subtask that belongs to this parent
     const subTask = await Task.findOne({
       _id: subTaskId,
-      parentTaskId: parentTaskId, // CRITICAL: Check parent relationship
+      parentTaskId: parentTaskId,
       isDeleted: true,
     });
 
@@ -970,7 +946,6 @@ export const restoreSubTask = async (
       return;
     }
 
-    // Only Admin or Project Leader can restore subtasks
     const canRestore =
       req.user.globalRole === GlobalRole.ADMIN ||
       project.leaderId.toString() === req.user._id.toString();
@@ -980,9 +955,6 @@ export const restoreSubTask = async (
       return;
     }
 
-    // Check if parent task still exists (already verified above)
-    
-    // Restore
     subTask.isDeleted = false;
     subTask.deletedAt = undefined;
     subTask.deletedBy = undefined;
@@ -995,10 +967,100 @@ export const restoreSubTask = async (
 
     res.json({
       message: "Subtask restored successfully",
-      task: restoredSubTask
+      task: restoredSubTask,
     });
   } catch (error) {
     console.error("Restore subtask error: ", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// Get task stats
+export const getTaskStats = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { projectId } = req.query;
+    
+    let matchConditions: any = { isDeleted: false };
+    
+    
+    if (projectId) {
+      matchConditions.projectId = projectId;
+    }
+    
+    
+    
+    
+    const stats = await Task.aggregate([
+      { $match: matchConditions },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalEstimatedHours: { $sum: { $ifNull: ["$estimatedHours", 0] } },
+          totalActualHours: { $sum: { $ifNull: ["$actualHours", 0] } },
+          avgCompletionTime: {
+            $avg: {
+              $cond: [
+                { $and: ["$completedAt", "$createdAt"] },
+                { $divide: [
+                  { $subtract: ["$completedAt", "$createdAt"] },
+                  1000 * 60 * 60 * 24 
+                ]},
+                null
+              ]
+            }
+          }
+        }
+      }
+    ]);
+    
+    
+    const timeStats = await Task.aggregate([
+      { 
+        $match: { 
+          ...matchConditions,
+          estimatedHours: { $gt: 0 },
+          actualHours: { $gt: 0 }
+        } 
+      },
+      {
+        $group: {
+          _id: null,
+          avgAccuracy: {
+            $avg: {
+              $multiply: [
+                { $divide: ["$estimatedHours", "$actualHours"] },
+                100
+              ]
+            }
+          },
+          tasksWithOverrun: {
+            $sum: {
+              $cond: [{ $gt: ["$actualHours", "$estimatedHours"] }, 1, 0]
+            }
+          }
+        }
+      }
+    ]);
+    
+    res.json({
+      statusDistribution: stats,
+      timeStatistics: timeStats[0] || {},
+      totals: {
+        totalTasks: await Task.countDocuments(matchConditions),
+        completedTasks: stats.find(s => s._id === TaskStatus.DONE)?.count || 0,
+        overdueTasks: await Task.countDocuments({
+          ...matchConditions,
+          endDate: { $lt: new Date() },
+          status: { $ne: TaskStatus.DONE }
+        })
+      }
+    });
+  } catch (error) {
+    console.error("Get task stats error: ", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };

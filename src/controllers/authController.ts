@@ -39,19 +39,45 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const isTempPassword = user.isTempPasswordActive;
 
-    const token = jwt.sign(
+    // Generate refresh token and store in user document
+    const refreshToken = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        type: 'refresh'
+      },
+      process.env.JWT_SECRET! + '-refresh',
+      { expiresIn: "7d" }
+    );
+
+    // Store refresh token in user document
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // Generate access token (short-lived)
+    const accessToken = jwt.sign(
       {
         id: user._id,
         email: user.email,
         globalRole: user.globalRole,
+        type: 'access'
       },
       process.env.JWT_SECRET!,
-      { expiresIn: "7d" }
+      { expiresIn: "15m" }
     );
 
-    res.json({
+    const options = {
+      httpOnly: true,
+      secure: true,
+    }
+
+    res
+    .cookie('accessToken', accessToken, options)
+    .cookie('refreshToken', refreshToken, options)
+    .json({
       message: "Login successful",
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         fname: user.fname,
@@ -61,9 +87,131 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         avatar: user.avatar,
       },
       isTempPassword: isTempPassword,
+      expiresIn: 900 // 15 minutes in seconds
     });
   } catch (error) {
     console.error("Login error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// Logout
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      $set: { refreshToken: null }
+    });
+
+    res.json({ 
+      message: "Logged out successfully.",
+      logoutAt: new Date()
+    });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// Refresh token
+export const refreshToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      res.status(400).json({ message: "Refresh token required." });
+      return;
+    }
+
+    try {
+      
+      const decoded = jwt.verify(
+        refreshToken, 
+        process.env.JWT_SECRET! + '-refresh'
+      ) as any;
+
+      
+      const user = await User.findOne({ 
+        _id: decoded.id, 
+        refreshToken: refreshToken,
+        isDeleted: false 
+      });
+
+      if (!user) {
+        res.status(401).json({ message: "Invalid refresh token." });
+        return;
+      }
+
+      
+      const newAccessToken = jwt.sign(
+        {
+          id: user._id,
+          email: user.email,
+          globalRole: user.globalRole,
+          type: 'access'
+        },
+        process.env.JWT_SECRET!,
+        { expiresIn: "15m" }
+      );
+
+      res.json({
+        message: "Token refreshed successfully",
+        accessToken: newAccessToken,
+        expiresIn: 900
+      });
+
+    } catch (jwtError) {
+      res.status(401).json({ message: "Invalid or expired refresh token." });
+      return;
+    }
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// Get sessions
+export const getSessions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    
+    const user = await User.findById(req.user._id).select('refreshToken lastActive');
+    
+    if (!user) {
+      res.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const currentSession = {
+      hasActiveSession: !!user.refreshToken,
+      lastActive: user.lastActive,
+      currentDevice: true
+    };
+
+    res.json({
+      sessions: [currentSession]
+    });
+  } catch (error) {
+    console.error("Get sessions error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// Revoke sessions
+export const revokeSessions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    
+    await User.findByIdAndUpdate(req.user._id, {
+      $set: { 
+        refreshToken: null,
+        lastActive: new Date()
+      }
+    });
+
+    res.json({ 
+      message: "All sessions revoked successfully.",
+      revokedAt: new Date()
+    });
+  } catch (error) {
+    console.error("Revoke sessions error:", error);
     res.status(500).json({ message: "Internal server error." });
   }
 };
@@ -99,6 +247,7 @@ export const getCurrentUser = async (
   }
 };
 
+// Set new password
 export const setNewPassword = async (
   req: AuthRequest,
   res: Response
@@ -146,6 +295,7 @@ export const setNewPassword = async (
   }
 };
 
+// Change password
 export const changePassword = async (
   req: AuthRequest,
   res: Response

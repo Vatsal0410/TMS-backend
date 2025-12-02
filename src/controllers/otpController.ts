@@ -32,11 +32,6 @@ export const requestPasswordResetOTP = async (
     const plainOTP = generateOTP();
     const otpData = await createOTP(plainOTP, "PASSWORD_RESET", 10);
 
-    console.log("OTP Storage Debug:", {
-      plainOTP: plainOTP,
-      hashedOTP: otpData.code,
-      hashedLength: otpData.code.length,
-    });
 
     user.otpRequests.push(otpData);
     await user.save();
@@ -57,6 +52,7 @@ export const requestPasswordResetOTP = async (
   }
 };
 
+// Verify password reset OTP
 export const verifyPasswordResetOTP = async (
   req: Request,
   res: Response
@@ -80,17 +76,6 @@ export const verifyPasswordResetOTP = async (
       const isNotUsed = !otpReq.used;
       const isNotExpired = otpReq.expiresAt > new Date();
 
-      console.log("OTP Check:", {
-        purpose: otpReq.purpose,
-        used: otpReq.used,
-        expiresAt: otpReq.expiresAt,
-        now: new Date(),
-        isPurposeMatch,
-        isNotUsed,
-        isNotExpired,
-        isValid: isPurposeMatch && isNotUsed && isNotExpired,
-      });
-
       return isPurposeMatch && isNotUsed && isNotExpired;
     });
 
@@ -100,15 +85,6 @@ export const verifyPasswordResetOTP = async (
     }
 
     const isOTPValid = await verifyOTP(otp, validOTP.code);
-
-    // ADD THIS DEBUG:
-    console.log("OTP Comparison Debug:", {
-      inputOTP: otp,
-      storedOTP: validOTP.code,
-      isOTPValid: isOTPValid,
-      storedOTPLength: validOTP.code.length,
-      storedOTPStartsWith: validOTP.code.substring(0, 10) + "...",
-    });
 
     if (!isOTPValid) {
       res.status(404).json({ message: "Invalid OTP." });

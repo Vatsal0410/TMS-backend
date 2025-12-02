@@ -74,10 +74,25 @@ export const getUsers = async (
   res: Response
 ): Promise<void> => {
   try {
-    const users = await User.find({ isDeleted: false })
-      .select("-password")
-      .sort({ createAt: -1 });
-    res.json({ users });
+  const { page = 1, limit = 20, search } = req.query;
+  const limitNumber = Number(limit);
+  const skip = (Number(page) - 1) * limitNumber;
+  
+  const query: any = {};
+  if (search) {
+    query.$or = [
+      { fname: { $regex: search, $options: 'i' } },
+      { lname: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } }
+    ];
+  }
+  
+  const [users, total] = await Promise.all([
+    User.find(query).select("-password").skip(skip).limit(limitNumber),
+    User.countDocuments(query)
+  ]);
+  
+  res.json({ users, total, page, totalPages: Math.ceil(total / limitNumber) });
   } catch (error) {
     console.error("Get users error:", error);
     res.status(500).json({ message: "Internal server error." });
@@ -110,7 +125,7 @@ export const updateUser = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { fname, lname, email, globalRole, isDeleted } = req.body;
+    const { fname, lname, email, isActive, globalRole, isDeleted } = req.body;
 
     const user = await User.findById({ _id: id, isDeleted: false });
 
@@ -121,6 +136,7 @@ export const updateUser = async (
     if (fname) user.fname = fname;
     if (lname) user.lname = lname;
     if (email) user.email = email;
+    if (typeof isActive === "boolean") user.isActive = isActive;
     if (globalRole) user.globalRole = globalRole;
     if (typeof isDeleted === "boolean") user.isDeleted = isDeleted
 
@@ -191,42 +207,4 @@ export const restoreUser = async(req: AuthRequest, res: Response): Promise<void>
   }
 }
 
-export const authorizeProject = (allowedProjectRoles: string[] = []) => {
-  return (req: AuthRequest, res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      res.status(401).json({ message: "Authentication required." });
-      return;
-    }
-
-    if (req.user.globalRole === GlobalRole.ADMIN) {
-      return next();
-    }
-
-    const projectId = req.params.projectId;
-
-    const projectAssignment = req.user.projectAssignments.find(
-      (assignment: any) => assignment.projectId.toString() === projectId
-    );
-
-    if (!projectAssignment) {
-      res
-        .status(403)
-        .json({ message: "You are not authorized to access this project." });
-      return;
-    }
-
-    if (
-      allowedProjectRoles.length > 0 &&
-      !allowedProjectRoles.includes(projectAssignment.projectRole)
-    ) {
-      res.status(403).json({
-        message: "Access denied. Insufficient project permissions.",
-        requiredProjectRoles: allowedProjectRoles,
-        userProjectRole: projectAssignment.projectRole,
-      });
-      return
-    }
-    next()
-  };
-};
 

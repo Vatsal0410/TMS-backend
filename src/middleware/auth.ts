@@ -7,6 +7,7 @@ export interface AuthRequest extends Request {
   user?: any;
 }
 
+// Middleware to authenticate user
 export const authenticate = async (
   req: AuthRequest,
   res: Response,
@@ -35,6 +36,7 @@ export const authenticate = async (
   }
 };
 
+// Middleware to authorize user
 export const authorize = (...allowedRoles: GlobalRole[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
 
@@ -55,6 +57,7 @@ export const authorize = (...allowedRoles: GlobalRole[]) => {
   };
 };
 
+// Middleware to check if temp password is active
 export const checkTempPassword = (req:AuthRequest, res: Response, next: NextFunction): void => {
   if(!req.user) {
     res.status(401).json({ message: 'Authentication required.' });
@@ -71,6 +74,7 @@ export const checkTempPassword = (req:AuthRequest, res: Response, next: NextFunc
   next()
 }
 
+// Middleware to authorize admin and project manager
 export const requireAdmin = authorize(GlobalRole.ADMIN);
 export const requireManager = authorize(
   GlobalRole.ADMIN,
