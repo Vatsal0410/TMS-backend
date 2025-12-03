@@ -3,7 +3,8 @@ import { AuthRequest } from "../middleware/auth";
 import { IProject, IProjectMember, Project } from "../models/Project";
 import { Task } from "../models/Task";
 import { GlobalRole, TaskPriority, TaskStatus } from "../types/enums";
-import { User } from "../models/User";
+import { IUser, User } from "../models/User";
+import { sendTaskAssignmentEmail } from "../utils/emailService";
 
 // Generate task number
 const generateTaskNumber = async (projectId: string): Promise<string> => {
@@ -59,8 +60,10 @@ export const createTask = async (
       return;
     }
 
+    let assignedUser:IUser | null = null;
+
     if (assignedTo) {
-      const assignedUser = await User.findOne({
+      assignedUser = await User.findOne({
         _id: assignedTo,
         isDeleted: false,
         globalRole: GlobalRole.TEAM_MEMBER,
@@ -71,7 +74,7 @@ export const createTask = async (
       }
 
       const isProjectMember = project.members.some(
-        (member) => member.userId.toString() === assignedUser._id.toString()
+        (member) => member.userId.toString() === assignedUser!._id.toString()
       );
       if (!isProjectMember) {
         res
@@ -115,6 +118,21 @@ export const createTask = async (
 
     await task.save();
 
+      if(assignedTo && assignedUser) {
+        try {
+          await sendTaskAssignmentEmail(
+            assignedUser.email,
+            title,
+            req.user.fname,
+            task._id.toString(),
+            assignedUser.fname
+          )
+        }
+        catch (sendEmailError) {
+          console.error("Error sending email for creating task:", sendEmailError);
+        }
+      }
+    
     const populatedTask = await Task.findById(task._id)
       .populate("projectId", "title leaderId")
       .populate("assignedTo", "fname lname email globalRole")
@@ -376,8 +394,9 @@ export const updateTask = async (
       }
     }
 
+    let assignedToUser: IUser | null = null
     if (assignedTo && assignedTo !== task.assignedTo?.toString()) {
-      const assignedToUser = await User.findOne({
+      assignedToUser = await User.findOne({
         _id: assignedTo,
         isDeleted: false,
         globalRole: GlobalRole.TEAM_MEMBER,
@@ -415,6 +434,20 @@ export const updateTask = async (
     if (actualHours !== undefined) task.actualHours = actualHours;
 
     await task.save();
+
+    if(assignedTo !== task.assignedTo?.toString() && assignedToUser) {
+      try {
+        await sendTaskAssignmentEmail(
+          assignedToUser.email,
+          title || task.title,
+          req.user.fname,
+          task._id.toString(),
+          assignedToUser.fname
+        )
+      } catch (sendEmailError) {
+        console.log("Error sending email for update task:", sendEmailError);
+      }
+    }
 
     const updatedTask = await Task.findById(id)
       .populate("projectId", "title")

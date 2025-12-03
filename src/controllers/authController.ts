@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { User } from "../models/User";
 import { AuthRequest } from "../middleware/auth";
 import { validatePasswordStrength } from "../utils/passwordValidator";
+import { sendPasswordChangeConfirmationEmail } from "../utils/emailService";
 
 // Login
 export const login = async (req: Request, res: Response): Promise<void> => {
@@ -345,6 +346,13 @@ export const changePassword = async (
     }
 
     await user.save();
+
+    try {
+      await sendPasswordChangeConfirmationEmail(email, user.fname);
+    }
+    catch (error) {
+      console.error("Error sending password change confirmation email:", error);
+    }
 
     res.json({
       message: "Password changed successfully.",

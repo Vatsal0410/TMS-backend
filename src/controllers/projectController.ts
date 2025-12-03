@@ -4,6 +4,7 @@ import { IProjectMember, Project } from "../models/Project";
 import { GlobalRole, ProjectRole, ProjectStatus } from "../types/enums";
 import { User } from "../models/User";
 import mongoose from "mongoose";
+import { sendProjectAssignmentEmail } from "../utils/emailService";
 
 // Create project
 export const createProject = async (
@@ -106,6 +107,24 @@ export const createProject = async (
     });
 
     await project.save();
+
+    for (const member of validatedMembers) {
+      const memberUser = await User.findById(member.userId)
+      if(memberUser && member.userId.toString() !== req.user._id.toString()) {
+        try {
+          await sendProjectAssignmentEmail(
+            memberUser.email,
+            title,
+            member.projectRole,
+            req.user.fname,
+            memberUser.fname
+          )
+        }
+        catch (emailError) {
+          console.error("Error sending email for project assignment:", emailError);
+        }
+      }
+    }
 
     const populatedProject = await Project.findById(project._id)
       .populate("leaderId", "id fname lname email globalRole")
@@ -307,6 +326,8 @@ export const updateProject = async (
 
     const currentLeaderId = leaderId || project.leaderId;
 
+    let updatedMembers: IProjectMember[] = [];
+
     if (members !== undefined) {
       const uniqueUserIds = new Set<string>();
       const validatedMembers: IProjectMember[] = [];
@@ -357,7 +378,7 @@ export const updateProject = async (
         });
       }
 
-      const updatedMembers = validatedMembers.map((member) => {
+      updatedMembers = validatedMembers.map((member) => {
         const existingMember = project.members.find(
           (m: any) => m.userId.toString() === member.userId.toString()
         );
@@ -426,6 +447,30 @@ export const updateProject = async (
     }
 
     await project.save();
+
+    const existingMemberIds = project.members.map((m: IProjectMember) => m.userId.toString());
+
+    const newMembers = updatedMembers.filter((member: IProjectMember) => 
+      !existingMemberIds.includes(member.userId.toString())
+    )
+
+    for (const newMember of newMembers) {
+      const memberUser = await User.findById(newMember.userId)
+      if(memberUser && newMember.userId.toString() !== req.user._id.toString()) {
+        try {
+          await sendProjectAssignmentEmail(
+            memberUser.email,
+            project.title,
+            newMember.projectRole,
+            req.user.fname,
+            memberUser.fname
+          )
+        }
+        catch (error) {
+          console.error("Error sending email for update project:", error);
+        }
+      }
+    }
 
     const updatedProject = await Project.findById(project._id)
       .populate("leaderId", "id fname lname email globalRole")

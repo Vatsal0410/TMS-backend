@@ -1,5 +1,5 @@
 import express from 'express';
-import { createUser, deleteUser, getUserById, getUsers, restoreUser, updateUser } from '../controllers/userController';
+import { createUser, deleteUser, getUserById, getUsers, restoreUser, updateUser, updateUserStatus } from '../controllers/userController';
 import { authenticate, checkTempPassword, requireAdmin } from '../middleware/auth';
 import { logout, refreshToken } from '../controllers/authController';
 
@@ -15,6 +15,7 @@ router.get('/:id', getUserById);
 router.put('/:id', updateUser);
 router.delete('/:id', deleteUser);
 router.put('/:id/restore', restoreUser);
+router.put('/:id/status', updateUserStatus)
 
 // Authentication routes
 router.post('/refresh-token', refreshToken);

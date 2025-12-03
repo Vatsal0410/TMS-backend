@@ -4,7 +4,7 @@ import { User } from "../models/User";
 import bcrypt from "bcryptjs";
 import { generateTempPassword } from "../utils/passwordGenerator";
 import { GlobalRole } from "../types/enums";
-import { sendWelcomeEmail } from "../utils/emailService";
+import { sendAccountStatusEmail, sendWelcomeEmail } from "../utils/emailService";
 
 // Create a new user
 export const createUser = async (
@@ -133,6 +133,12 @@ export const updateUser = async (
       res.status(404).json({ message: "User not found." });
       return;
     }
+
+    if(user.isDeleted === true) {
+      res.status(404).json({ message: "Restore deleted user for update." });
+      return
+    }
+
     if (fname) user.fname = fname;
     if (lname) user.lname = lname;
     if (email) user.email = email;
@@ -141,6 +147,19 @@ export const updateUser = async (
     if (typeof isDeleted === "boolean") user.isDeleted = isDeleted
 
     await user.save();
+
+    if(isActive) {
+      try {
+        await sendAccountStatusEmail(user.email, user.fname, user.isActive)
+      }
+      catch (emailError){
+        console.error('Erroe sending email for account status: ', emailError)
+      }
+    }
+
+    if(!isActive && user.isActive) {
+      
+    }
 
     const updatedUser = await User.findById(user._id).select("-password");
 
@@ -207,4 +226,61 @@ export const restoreUser = async(req: AuthRequest, res: Response): Promise<void>
   }
 }
 
+export const updateUserStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
 
+    if(typeof isActive !== "boolean") {
+      res.status(400).json({ message: "Invalid isActive value." });
+      return
+    }
+
+    if(id === req.user._id.toString()) {
+      res.status(400).json({ message: "You cannot change your own status." });
+      return
+    }
+
+    const user = await User.findOne({
+      _id: id,
+      isDeleted: false
+    })
+
+    if(!user) {
+      res.status(404).json({ message: "User not found." });
+      return
+    }
+
+    if(user.isActive === isActive) {
+      res.status(400).json({ message: `User is already ${isActive ? "active" : "inactive"}.` });
+      return
+    }
+
+    const oldStatus = user.isActive
+    user.isActive = isActive
+    user.updatedBy = req.user._id
+    await user.save()
+
+    try {
+      await sendAccountStatusEmail(user.email, user.fname, user.isActive)
+    } catch (emailError) {
+      console.error('Erroe sending email for account status: ', emailError)
+    }
+
+    res.json({
+      message: `User status changed to ${isActive ? "active" : "inactive"} successfully.`,
+      user: {
+        id: user._id,
+        fname: user.fname,
+        lname: user.lname,
+        email: user.email,
+        globalRole: user.globalRole,
+        isActive: user.isActive,
+        previousStatus: oldStatus
+      }
+    })
+  } catch (error) {
+    console.error("Change account status error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
+}
