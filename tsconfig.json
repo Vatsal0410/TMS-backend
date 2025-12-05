@@ -15,5 +15,10 @@
     "noEmitOnError": false
   },
   "include": ["src/**/*"],
+<<<<<<< HEAD
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
+=======
+  "exclude": ["node_modules", "dist"]
+}
+>>>>>>> 6960ea92011d38f22a4075c1f0fbb1fa34c32380
