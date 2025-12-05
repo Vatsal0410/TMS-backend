@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon",
-    "build": "tsc",
-    "start": "tsx src/index.ts",
+    "build": "tsc --skipLibCheck",
+    "start": "node dist/index.js",
     "clean": "rm -rf dist",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts"
   },
@@ -20,6 +20,7 @@
     "@types/express": "^5.0.5",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
+    "@types/nodemailer": "^7.0.4",
     "@types/socket.io": "^3.0.2",
     "dotenv": "^17.2.3",
     "bcryptjs": "^3.0.3",
@@ -34,7 +35,6 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@types/nodemailer": "^7.0.4",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0"
