@@ -3,10 +3,9 @@
   "version": "1.0.0",
   "description": "Task Management System Backend",
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
-     "start": "node dist/app.js",
-    "dev": "nodemon src/app.ts",
+    "start": "node dist/index.js",
+    "dev": "nodemon src/index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
