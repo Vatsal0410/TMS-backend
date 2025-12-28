@@ -20,7 +20,7 @@ if (!MONGO_URI) {
   throw new Error("❌ MONGODB_URI is missing in environment variables");
 }
 
-const allowedOrigins = [process.env.FRONTEND_URL, process.env.PROD_FRONTEND_URL];
+const allowedOrigins = [process.env.FRONTEND_URL as string, process.env.PROD_FRONTEND_URL as string];
 
 app.use(cors({
   origin: allowedOrigins, 
