@@ -20,7 +20,7 @@ if (!MONGO_URI) {
   throw new Error("❌ MONGODB_URI is missing in environment variables");
 }
 
-const allowedOrigins = [process.env.FRONTEND_URL as string, process.env.PROD_FRONTEND_URL as string];
+const allowedOrigins = [process.env.PROD_FRONTEND_URL as string, process.env.FRONTEND_URL as string];
 
 app.use(cors({
   origin: allowedOrigins, 
@@ -39,6 +39,14 @@ app.get("/health", (req, res) => {
   res.json({ message: "Server is running!" });
 });
 
+app.get("/cors-test", (req, res) => {
+  res.json({
+    origin: req.headers.origin,
+    allowedOrigins: allowedOrigins,
+    headers: req.headers
+  });
+});
+
 async function startServer() {
   try {
     await mongoose.connect(MONGO_URI);
@@ -46,6 +54,7 @@ async function startServer() {
 
     app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT}`);
+      console.log(`Allowed Origins: ${allowedOrigins[0]}`);
     });
   } catch (error) {
     console.error("❌ Error connecting to MongoDB:", error);
